@@ -1,0 +1,19 @@
+# Марвел Бот — зависимости
+
+# Telegram Bot (последняя версия с поддержкой Python 3.14)
+python-telegram-bot[job-queue]>=21.6
+
+# OpenAI / OpenRouter API
+openai>=1.30.0
+
+# Планировщик задач
+APScheduler==3.10.4
+
+# Таймзоны
+tzdata
+
+# Переменные окружения
+python-dotenv>=1.0.1
+
+# HTTP запросы (крипто API: CoinGecko, DeFiLlama, Binance, Fear&Greed)
+requests>=2.31.0
