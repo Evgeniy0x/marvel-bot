@@ -307,75 +307,155 @@ async def parse_things_task(text: str, user_tz: str = TIMEZONE) -> dict:
         }
 
 
-# ── Чтение задач из Things 3 (локальный REST API) ─────────────────────────────
+# ── Чтение задач из Things 3 (AppleScript) ────────────────────────────────────
+# Работает без токена — напрямую через приложение Things 3 на Mac.
 
-THINGS_LOCAL_URL = "http://localhost:15000"
+_THINGS_SCRIPT_TODAY = '''
+tell application "Things3"
+    set output to ""
+    try
+        set todayTasks to to dos of list "Today"
+        repeat with t in todayTasks
+            set tName to name of t
+            set tStatus to (status of t) as text
+            set tTimeStr to ""
+            try
+                set tAct to activation date of t
+                set tH to hours of tAct
+                set tM to minutes of tAct
+                if tH < 10 then
+                    set tTimeStr to "0" & (tH as text)
+                else
+                    set tTimeStr to (tH as text)
+                end if
+                set tTimeStr to tTimeStr & ":"
+                if tM < 10 then
+                    set tTimeStr to tTimeStr & "0" & (tM as text)
+                else
+                    set tTimeStr to tTimeStr & (tM as text)
+                end if
+            end try
+            set tProject to ""
+            try
+                set tProject to (name of project of t) as text
+            end try
+            set tArea to ""
+            try
+                set tArea to (name of area of t) as text
+            end try
+            set output to output & tName & "|||" & tStatus & "|||" & tTimeStr & "|||" & tProject & "|||" & tArea & "\n"
+        end repeat
+    end try
+    return output
+end tell
+'''
+
+_THINGS_SCRIPT_UPCOMING = '''
+tell application "Things3"
+    set output to ""
+    try
+        set upcomingTasks to to dos of list "Upcoming"
+        repeat with t in upcomingTasks
+            set tName to name of t
+            set tStatus to (status of t) as text
+            set tDue to ""
+            try
+                set tDue to (due date of t) as text
+            end try
+            set tProject to ""
+            try
+                set tProject to (name of project of t) as text
+            end try
+            set output to output & tName & "|||" & tStatus & "|||" & tDue & "|||" & tProject & "\n"
+        end repeat
+    end try
+    return output
+end tell
+'''
+
+
+def _run_applescript(script: str) -> Optional[str]:
+    """Запускает AppleScript и возвращает результат."""
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            return result.stdout
+        logger.warning(f"AppleScript stderr: {result.stderr[:300]}")
+        return None
+    except FileNotFoundError:
+        logger.error("osascript не найден — не macOS?")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.error("AppleScript timeout")
+        return None
+    except Exception as e:
+        logger.error(f"AppleScript error: {e}")
+        return None
+
+
+def _parse_things_output(raw: str) -> list:
+    """Парсит вывод AppleScript в список задач."""
+    tasks = []
+    for line in raw.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("|||")
+        if not parts[0].strip():
+            continue
+
+        title    = parts[0].strip()
+        status   = parts[1].strip() if len(parts) > 1 else ""
+        reminder = parts[2].strip() if len(parts) > 2 else ""
+        project  = parts[3].strip() if len(parts) > 3 else ""
+        area     = parts[4].strip() if len(parts) > 4 else ""
+
+        # "missing value" — заглушка AppleScript для пустых значений
+        project = "" if project == "missing value" else project
+        area    = "" if area    == "missing value" else area
+        reminder= "" if reminder== "missing value" else reminder
+
+        tasks.append({
+            "title":     title,
+            "completed": "completed" in status.lower(),
+            "canceled":  "canceled"  in status.lower(),
+            "reminder":  reminder,   # "HH:MM" или ""
+            "project":   {"title": project} if project else {},
+            "area":      {"title": area}    if area    else {},
+        })
+    return tasks
 
 
 async def get_things_today() -> Optional[list]:
     """
-    Читает задачи на сегодня из Things 3 через локальный REST API.
-
-    Как включить API в Things 3:
-      Настройки → Основные → Things URLs → Управлять → Скопировать токен
-      Вставить токен в .env: THINGS_AUTH_TOKEN=ваш_токен
+    Читает задачи на сегодня из Things 3 через AppleScript.
+    Не требует токена — Things 3 должен быть запущен на Mac.
     """
-    from config import THINGS_AUTH_TOKEN
-    if not THINGS_AUTH_TOKEN:
-        return None
-
-    import requests as _req
-    from concurrent.futures import ThreadPoolExecutor
-
-    def _fetch():
-        try:
-            resp = _req.get(
-                f"{THINGS_LOCAL_URL}/tasks",
-                params={"filter": "today"},
-                headers={"Authorization": f"Bearer {THINGS_AUTH_TOKEN}"},
-                timeout=5,
-            )
-            if resp.status_code == 200:
-                return resp.json()
-            logger.warning(f"Things API: HTTP {resp.status_code}")
-            return None
-        except _req.exceptions.ConnectionError:
-            logger.warning("Things 3 не запущен или API недоступен (localhost:15000)")
-            return None
-        except Exception as e:
-            logger.error(f"get_things_today error: {e}")
-            return None
-
     loop = asyncio.get_running_loop()
+    from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=1) as ex:
-        return await loop.run_in_executor(ex, _fetch)
+        raw = await loop.run_in_executor(
+            ex, lambda: _run_applescript(_THINGS_SCRIPT_TODAY)
+        )
+    if raw is None:
+        return None
+    return _parse_things_output(raw)
 
 
 async def get_things_upcoming(days: int = 7) -> Optional[list]:
-    """Задачи на ближайшие N дней из Things 3."""
-    from config import THINGS_AUTH_TOKEN
-    if not THINGS_AUTH_TOKEN:
-        return None
-
-    import requests as _req
-    from concurrent.futures import ThreadPoolExecutor
-
-    def _fetch():
-        try:
-            resp = _req.get(
-                f"{THINGS_LOCAL_URL}/tasks",
-                params={"filter": "upcoming"},
-                headers={"Authorization": f"Bearer {THINGS_AUTH_TOKEN}"},
-                timeout=5,
-            )
-            return resp.json() if resp.status_code == 200 else None
-        except Exception as e:
-            logger.error(f"get_things_upcoming error: {e}")
-            return None
-
+    """Задачи на ближайшее время из Things 3 через AppleScript."""
     loop = asyncio.get_running_loop()
+    from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=1) as ex:
-        return await loop.run_in_executor(ex, _fetch)
+        raw = await loop.run_in_executor(
+            ex, lambda: _run_applescript(_THINGS_SCRIPT_UPCOMING)
+        )
+    if raw is None:
+        return None
+    return _parse_things_output(raw)
 
 
 def format_things_tasks(tasks: list, tz_str: str = TIMEZONE) -> str:
@@ -390,43 +470,37 @@ def format_things_tasks(tasks: list, tz_str: str = TIMEZONE) -> str:
 
     if not todo and not done:
         return (
-            f"🎉 *В Things 3 на сегодня задач нет!*\n"
-            f"_Можешь добавить: «Встреча завтра в 10:00»_"
+            "🎉 *В Things 3 на сегодня задач нет!*\n"
+            "_Можешь добавить: «Встреча завтра в 10:00»_"
         )
 
     lines = [
         f"📋 *Задачи на сегодня* — {now.strftime('%d.%m.%Y')}",
-        f"_Things 3 · {len(todo)} активных" + (f" · {len(done)} выполнено" if done else "") + "_",
+        "_Things 3 · " + str(len(todo)) + " активных"
+        + (f" · {len(done)} выполнено" if done else "") + "_",
         "",
     ]
 
     for t in todo:
-        title   = t.get("title") or "Без названия"
-        project = (t.get("project") or {}).get("title", "")
-        area    = (t.get("area") or {}).get("title", "")
+        title    = t.get("title") or "Без названия"
+        project  = (t.get("project") or {}).get("title", "")
+        area     = (t.get("area")    or {}).get("title", "")
         reminder = t.get("reminder", "")
 
-        # Время напоминания
-        time_str = ""
-        if reminder:
-            try:
-                dt = datetime.fromisoformat(reminder.replace("Z", "+00:00"))
-                time_str = f" ⏰ {dt.astimezone(tz).strftime('%H:%M')}"
-            except Exception:
-                pass
-
-        context = project or area
-        ctx_str = f"  _· {context}_" if context else ""
+        # AppleScript возвращает время как "HH:MM"
+        time_str = f" ⏰ {reminder}" if reminder else ""
+        context  = project or area
+        ctx_str  = f"  _· {context}_" if context else ""
 
         lines.append(f"⬜ *{title}*{time_str}{ctx_str}")
 
     if done:
         lines.append("")
-        lines.append(f"_Выполнено сегодня:_")
+        lines.append("_Выполнено сегодня:_")
         for t in done[:5]:
-            lines.append(f"✅ {t.get('title','?')}")
+            lines.append(f"✅ {t.get('title', '?')}")
         if len(done) > 5:
-            lines.append(f"_...и ещё {len(done)-5}_")
+            lines.append(f"_...и ещё {len(done) - 5}_")
 
     lines.append(f"\n_Things 3 · {now.strftime('%H:%M')}_")
     return "\n".join(lines)

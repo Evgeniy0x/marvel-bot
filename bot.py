@@ -49,7 +49,7 @@ from analytics import (
 from config import (
     TELEGRAM_TOKEN, ALLOWED_USERS, TIMEZONE,
     MORNING_HOUR, MORNING_MINUTE,
-    WHISPER_ENABLED, TTS_ENABLED, SEARCH_ENABLED, THINGS_ENABLED, THINGS_READ_ENABLED
+    WHISPER_ENABLED, TTS_ENABLED, SEARCH_ENABLED, THINGS_ENABLED
 )
 from things_integration import get_things_today, format_things_tasks
 
@@ -511,19 +511,8 @@ async def _process_intent(
 # ── Вспомогательные обработчики ───────────────────────────────────────────────
 
 async def _show_things_today(update: Update, user_id: int, tz_str: str):
-    """Показывает задачи на сегодня из Things 3."""
+    """Показывает задачи на сегодня из Things 3 через AppleScript."""
     msg = await update.effective_message.reply_text("📋 Загружаю задачи из Things 3...")
-
-    if not THINGS_READ_ENABLED:
-        await msg.edit_text(
-            "⚙️ *Чтение задач из Things 3 не настроено*\n\n"
-            "Нужно добавить токен в `.env`:\n"
-            "`THINGS_AUTH_TOKEN=твой_токен`\n\n"
-            "Как получить токен:\n"
-            "Things 3 → Настройки → Основные → Things URLs → Управлять → Скопировать токен",
-            parse_mode="Markdown"
-        )
-        return
 
     tasks = await get_things_today()
 
@@ -531,9 +520,10 @@ async def _show_things_today(update: Update, user_id: int, tz_str: str):
         await msg.edit_text(
             "⚠️ *Things 3 недоступен*\n\n"
             "Убедись что:\n"
-            "• Things 3 запущен на Mac\n"
-            "• Токен в `.env` правильный\n"
-            "• Локальный API включён в настройках Things 3",
+            "• Things 3 *запущен* на Mac\n"
+            "• Mac не заблокирован (экран разблокирован)\n"
+            "• Things 3 имеет разрешение на автоматизацию\n\n"
+            "_Попробуй открыть Things 3 и повторить._",
             parse_mode="Markdown"
         )
         return
