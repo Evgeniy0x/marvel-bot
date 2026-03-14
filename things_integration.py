@@ -343,7 +343,7 @@ tell application "Things3"
             try
                 set tArea to (name of area of t) as text
             end try
-            set output to output & tName & "|||" & tStatus & "|||" & tTimeStr & "|||" & tProject & "|||" & tArea & "\n"
+            set output to output & tName & "|||" & tStatus & "|||" & tTimeStr & "|||" & tProject & "|||" & tArea & (ASCII character 10)
         end repeat
     end try
     return output
@@ -366,7 +366,7 @@ tell application "Things3"
             try
                 set tProject to (name of project of t) as text
             end try
-            set output to output & tName & "|||" & tStatus & "|||" & tDue & "|||" & tProject & "\n"
+            set output to output & tName & "|||" & tStatus & "|||" & tDue & "|||" & tProject & (ASCII character 10)
         end repeat
     end try
     return output
@@ -375,10 +375,11 @@ end tell
 
 
 def _run_applescript(script: str) -> Optional[str]:
-    """Запускает AppleScript и возвращает результат."""
+    """Запускает AppleScript через stdin (надёжнее чем -e для многострочных скриптов)."""
     try:
         result = subprocess.run(
-            ["osascript", "-e", script],
+            ["osascript"],
+            input=script,
             capture_output=True, text=True, timeout=15
         )
         if result.returncode == 0:
