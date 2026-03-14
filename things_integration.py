@@ -305,3 +305,128 @@ async def parse_things_task(text: str, user_tz: str = TIMEZONE) -> dict:
             "reminder_minutes": None,
             "tags":             [],
         }
+
+
+# ── Чтение задач из Things 3 (локальный REST API) ─────────────────────────────
+
+THINGS_LOCAL_URL = "http://localhost:15000"
+
+
+async def get_things_today() -> Optional[list]:
+    """
+    Читает задачи на сегодня из Things 3 через локальный REST API.
+
+    Как включить API в Things 3:
+      Настройки → Основные → Things URLs → Управлять → Скопировать токен
+      Вставить токен в .env: THINGS_AUTH_TOKEN=ваш_токен
+    """
+    from config import THINGS_AUTH_TOKEN
+    if not THINGS_AUTH_TOKEN:
+        return None
+
+    import requests as _req
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _fetch():
+        try:
+            resp = _req.get(
+                f"{THINGS_LOCAL_URL}/tasks",
+                params={"filter": "today"},
+                headers={"Authorization": f"Bearer {THINGS_AUTH_TOKEN}"},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            logger.warning(f"Things API: HTTP {resp.status_code}")
+            return None
+        except _req.exceptions.ConnectionError:
+            logger.warning("Things 3 не запущен или API недоступен (localhost:15000)")
+            return None
+        except Exception as e:
+            logger.error(f"get_things_today error: {e}")
+            return None
+
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        return await loop.run_in_executor(ex, _fetch)
+
+
+async def get_things_upcoming(days: int = 7) -> Optional[list]:
+    """Задачи на ближайшие N дней из Things 3."""
+    from config import THINGS_AUTH_TOKEN
+    if not THINGS_AUTH_TOKEN:
+        return None
+
+    import requests as _req
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _fetch():
+        try:
+            resp = _req.get(
+                f"{THINGS_LOCAL_URL}/tasks",
+                params={"filter": "upcoming"},
+                headers={"Authorization": f"Bearer {THINGS_AUTH_TOKEN}"},
+                timeout=5,
+            )
+            return resp.json() if resp.status_code == 200 else None
+        except Exception as e:
+            logger.error(f"get_things_upcoming error: {e}")
+            return None
+
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        return await loop.run_in_executor(ex, _fetch)
+
+
+def format_things_tasks(tasks: list, tz_str: str = TIMEZONE) -> str:
+    """Форматирует задачи Things 3 для красивого отображения в Telegram."""
+    from zoneinfo import ZoneInfo
+
+    tz  = ZoneInfo(tz_str)
+    now = datetime.now(tz)
+
+    todo = [t for t in tasks if not t.get("completed") and not t.get("canceled")]
+    done = [t for t in tasks if t.get("completed")]
+
+    if not todo and not done:
+        return (
+            f"🎉 *В Things 3 на сегодня задач нет!*\n"
+            f"_Можешь добавить: «Встреча завтра в 10:00»_"
+        )
+
+    lines = [
+        f"📋 *Задачи на сегодня* — {now.strftime('%d.%m.%Y')}",
+        f"_Things 3 · {len(todo)} активных" + (f" · {len(done)} выполнено" if done else "") + "_",
+        "",
+    ]
+
+    for t in todo:
+        title   = t.get("title") or "Без названия"
+        project = (t.get("project") or {}).get("title", "")
+        area    = (t.get("area") or {}).get("title", "")
+        reminder = t.get("reminder", "")
+
+        # Время напоминания
+        time_str = ""
+        if reminder:
+            try:
+                dt = datetime.fromisoformat(reminder.replace("Z", "+00:00"))
+                time_str = f" ⏰ {dt.astimezone(tz).strftime('%H:%M')}"
+            except Exception:
+                pass
+
+        context = project or area
+        ctx_str = f"  _· {context}_" if context else ""
+
+        lines.append(f"⬜ *{title}*{time_str}{ctx_str}")
+
+    if done:
+        lines.append("")
+        lines.append(f"_Выполнено сегодня:_")
+        for t in done[:5]:
+            lines.append(f"✅ {t.get('title','?')}")
+        if len(done) > 5:
+            lines.append(f"_...и ещё {len(done)-5}_")
+
+    lines.append(f"\n_Things 3 · {now.strftime('%H:%M')}_")
+    return "\n".join(lines)

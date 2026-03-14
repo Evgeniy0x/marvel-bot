@@ -41,10 +41,13 @@ DB_PATH          = os.getenv("DB_PATH", "marvel.db")
 MORNING_HOUR     = int(os.getenv("MORNING_HOUR", "8"))
 MORNING_MINUTE   = int(os.getenv("MORNING_MINUTE", "0"))
 
-# ── Things 3 (через URL Scheme — не требует паролей) ──
-APPLE_ID           = os.getenv("APPLE_ID", "")
-APPLE_APP_PASSWORD = os.getenv("APPLE_APP_PASSWORD", "")
-THINGS_ENABLED     = True   # URL Scheme работает без авторизации
+# ── Things 3 ──────────────────────────────────────────
+# URL Scheme (запись задач) — работает без токена
+THINGS_ENABLED     = True
+# Локальный REST API (чтение задач) — нужен токен
+# Things 3 → Настройки → Основные → Things URLs → Управлять → Скопировать токен
+THINGS_AUTH_TOKEN  = os.getenv("THINGS_AUTH_TOKEN", "")
+THINGS_READ_ENABLED = bool(THINGS_AUTH_TOKEN)
 
 # ── Крипто API (опциональные ключи — базовые функции работают без них) ──────
 # CoinGecko Pro: https://www.coingecko.com/en/api — бесплатно до 10k запросов/мес
